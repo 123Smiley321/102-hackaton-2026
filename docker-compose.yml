@@ -31,7 +31,10 @@ services:
 
   bot:
     build: ./backend
-    env_file: .env
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      AI_AGENT_URL: "${AI_AGENT_URL:-}"
     command: ["python", "-m", "app.bot"]
     depends_on:
       db:
@@ -43,9 +46,19 @@ services:
 
   publications:
     build: ./publications
-    env_file: .env
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
+      BACKEND_URL: "${BACKEND_URL:-http://backend:8000}"
+      PUBLISHER_INTERNAL_KEY: "${PUBLISHER_INTERNAL_KEY:-}"
+      AI_AGENT_URL: "${AI_AGENT_URL:-}"
+      SCHEDULER_INTERVAL_SEC: "${SCHEDULER_INTERVAL_SEC:-15}"
+      MONITOR_INTERVAL_SEC: "${MONITOR_INTERVAL_SEC:-60}"
+      PUBLICATION_BATCH_SIZE: "${PUBLICATION_BATCH_SIZE:-50}"
+      BACKEND_TIMEOUT_SEC: "${BACKEND_TIMEOUT_SEC:-100}"
     depends_on:
       db:
+        condition: service_healthy
+      backend:
         condition: service_healthy
     restart: unless-stopped
 
