@@ -31,3 +31,5 @@
 9. VK token сохраняется только при настроенном Fernet `ENCRYPTION_KEY`; без ключа операция должна завершиться ошибкой.
 10. Проверить audit log для создания/изменения компании, ключей, отзыва credentials и публикаций.
 11. Проверить, что API-ответы CompanyOut не содержат токены.
+12. Проверить переменные контейнеров: `OPENAI_API_KEY` есть только у `ai-agent`; `ADMIN_API_KEY`, publisher/Fernet/Telegram/VK secrets у `ai-agent` отсутствуют.
+13. При включённом `AI_AGENT_API_KEY` Backend, bot и worker передают `X-Internal-Key`; запрос без ключа или с неверным ключом получает HTTP 401.

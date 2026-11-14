@@ -32,6 +32,7 @@ services:
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       AI_AGENT_URL: "${AI_AGENT_URL:-}"
+      AI_AGENT_API_KEY: "${AI_AGENT_API_KEY:-}"
     command: ["python", "-m", "app.bot"]
     depends_on:
       db:
