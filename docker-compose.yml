@@ -16,7 +16,16 @@ services:
 
   backend:
     build: ./backend
-    env_file: .env
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      ADMIN_API_KEY: "${ADMIN_API_KEY:-}"
+      AI_AGENT_URL: "${AI_AGENT_URL:-}"
+      AI_AGENT_API_KEY: "${AI_AGENT_API_KEY:-}"
+      VK_API_VERSION: "${VK_API_VERSION:-5.199}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:-}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:8000}"
+      PUBLISHER_INTERNAL_KEY: "${PUBLISHER_INTERNAL_KEY:-}"
     ports:
       - "8000:8000"
     depends_on:
@@ -35,6 +44,7 @@ services:
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       AI_AGENT_URL: "${AI_AGENT_URL:-}"
+      AI_AGENT_API_KEY: "${AI_AGENT_API_KEY:-}"
     command: ["python", "-m", "app.bot"]
     depends_on:
       db:
@@ -51,6 +61,7 @@ services:
       BACKEND_URL: "${BACKEND_URL:-http://backend:8000}"
       PUBLISHER_INTERNAL_KEY: "${PUBLISHER_INTERNAL_KEY:-}"
       AI_AGENT_URL: "${AI_AGENT_URL:-}"
+      AI_AGENT_API_KEY: "${AI_AGENT_API_KEY:-}"
       SCHEDULER_INTERVAL_SEC: "${SCHEDULER_INTERVAL_SEC:-15}"
       MONITOR_INTERVAL_SEC: "${MONITOR_INTERVAL_SEC:-60}"
       PUBLICATION_BATCH_SIZE: "${PUBLICATION_BATCH_SIZE:-50}"
@@ -64,16 +75,42 @@ services:
 
   ai-agent:
     build: ./ai_agent
-    env_file: .env
     environment:
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/marketer}"
+      AI_MEDIA_DIR: "/data/media"
       AI_MEDIA_BASE_URL: "http://ai-agent:8000/media"
+      AI_PUBLIC_MEDIA_BASE_URL: "${AI_PUBLIC_MEDIA_BASE_URL:-}"
+      AI_AGENT_API_KEY: "${AI_AGENT_API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-offline}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://llm.api.cloud.yandex.net/v1}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-}"
+      OPENAI_AUTH_SCHEME: "${OPENAI_AUTH_SCHEME:-}"
+      LLM_RETRY_WAIT: "${LLM_RETRY_WAIT:-16}"
+      CODEX_BIN: "${CODEX_BIN:-codex}"
+      CODEX_MODEL: "${CODEX_MODEL:-}"
+      IMAGE_PROVIDER: "${IMAGE_PROVIDER:-offline}"
+      IMAGE_MODEL: "${IMAGE_MODEL:-gpt-image-1}"
+      IMAGE_API_KEY: "${IMAGE_API_KEY:-}"
+      IMAGE_BASE_URL: "${IMAGE_BASE_URL:-}"
+      IMAGE_SIZE: "${IMAGE_SIZE:-1536x1024}"
+      KANDINSKY_API_KEY: "${KANDINSKY_API_KEY:-}"
+      KANDINSKY_SECRET_KEY: "${KANDINSKY_SECRET_KEY:-}"
+      KANDINSKY_BASE_URL: "${KANDINSKY_BASE_URL:-https://api-key.fusionbrain.ai/}"
+      POLLINATIONS_TIMEOUT: "${POLLINATIONS_TIMEOUT:-25}"
+      POLLINATIONS_BASE_URL: "${POLLINATIONS_BASE_URL:-https://image.pollinations.ai}"
+      POLLINATIONS_API_KEY: "${POLLINATIONS_API_KEY:-}"
+      POLLINATIONS_MODEL: "${POLLINATIONS_MODEL:-flux}"
+      POLLINATIONS_RETRY_WAIT: "${POLLINATIONS_RETRY_WAIT:-16}"
+      HISTORY_LIMIT: "${HISTORY_LIMIT:-12}"
+      KB_TOP_K: "${KB_TOP_K:-5}"
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ai_media:/data/media
     ports:
-      - "8001:8000"   # отладка и форма настройки компании: http://localhost:8001/admin
+      - "127.0.0.1:8001:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
