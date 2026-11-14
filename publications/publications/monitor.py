@@ -25,6 +25,13 @@ NEGATIVE = re.compile(
 )
 
 
+def ai_agent_headers() -> dict[str, str]:
+    """Authenticate the worker → AI-agent call without exposing platform secrets."""
+    if settings.ai_agent_api_key:
+        return {"X-Internal-Key": settings.ai_agent_api_key}
+    return {}
+
+
 async def draft_reply(company: Company, comment_text: str) -> str:
     """Generate a private draft; failure falls back to a safe generic draft."""
     fallback = "Спасибо за обратную связь! Ответим подробнее в ближайшее время."
@@ -51,7 +58,11 @@ async def draft_reply(company: Company, comment_text: str) -> str:
     }
     try:
         async with httpx.AsyncClient(timeout=90) as client:
-            response = await client.post(settings.ai_agent_url, json=payload)
+            response = await client.post(
+                settings.ai_agent_url,
+                json=payload,
+                headers=ai_agent_headers(),
+            )
             response.raise_for_status()
             data = response.json()
         text = data.get("text")
