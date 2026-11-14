@@ -10,8 +10,9 @@
 |---|---|---|
 | `backend/` | FastAPI + aiogram: компании, история, knowledge base, согласование, публикация, безопасность, аудит | Р1 (Арина) |
 | `publications/` | Очередь approved-публикаций, вызов internal API, мониторинг VK, черновики ответов | Р5 (Данил) |
+| `ai_agent/` | AI-агент: тексты (YandexGPT), картинки (Pollinations), база знаний компании, форма настройки `/admin` | Р2 (Ангелина) |
 | `docs/` | База знаний и материалы Салаватстекло | Р3 (Лиза) |
-| `docker-compose.yml` | PostgreSQL, Backend, Telegram-бот и publication worker | общий |
+| `docker-compose.yml` | PostgreSQL, Backend, Telegram-бот, publication worker и AI-агент | общий |
 
 ## Быстрый старт
 
@@ -111,6 +112,10 @@ docker compose exec db psql -U postgres -d marketer -c \
 Backend отправляет `{prompt, company, history, knowledge_base}`. `knowledge_base` — до 20 последних
 записей выбранной компании, каждая содержит `title`, `content` (до 4000 символов) и `source`.
 Ожидаемый ответ: `{"text":"...","image_url":"https://..."}`, где `image_url` необязателен.
+
+Сервис `ai-agent` из `ai_agent/` принимает этот контракт на `http://ai-agent:8000/v1/generate`.
+Проверка: `curl http://localhost:8001/health`. Подробности, форма настройки компании `/admin` и ответы на
+вопросы жюри — `ai_agent/README.md` и `ai_agent/docs/for_danil.md`.
 
 ## Проверки качества
 

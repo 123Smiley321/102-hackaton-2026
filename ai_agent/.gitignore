@@ -1,0 +1,8 @@
+.env
+data/
+data_demo/
+__pycache__/
+*.sqlite
+*.sqlite-journal
+demo_output/
+_to_delete/

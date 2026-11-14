@@ -62,5 +62,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ai-agent:
+    build: ./ai_agent
+    env_file: .env
+    environment:
+      AI_MEDIA_BASE_URL: "http://ai-agent:8000/media"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ai_media:/data/media
+    ports:
+      - "8001:8000"   # отладка и форма настройки компании: http://localhost:8001/admin
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
+  ai_media:

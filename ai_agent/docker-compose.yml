@@ -1,0 +1,37 @@
+# Чтобы поднять AI-модуль отдельно (для проверки): docker compose up --build
+# В общий compose проекта переносится только сервис ai-agent и том ai_media (db там уже есть).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cyber102
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cyber102"]
+      interval: 5s
+      retries: 10
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  ai-agent:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cyber102
+      AI_MEDIA_BASE_URL: http://ai-agent:8000/media
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ai_media:/data/media
+      # для LLM_PROVIDER=codex: вход в ChatGPT делается один раз, токен лежит в томе
+      - codex_auth:/root/.codex
+    ports:
+      - "8001:8000"   # наружу только для отладки; внутри сети сервис доступен как http://ai-agent:8000
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  ai_media:
+  codex_auth:
