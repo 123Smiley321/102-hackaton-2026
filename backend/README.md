@@ -19,7 +19,7 @@
 
 1. Установить Docker Desktop и запустить Docker.
 2. Скопировать `.env.example` в `.env`.
-3. Заполнить `TELEGRAM_BOT_TOKEN`, `ADMIN_API_KEY`, отдельный `PUBLISHER_INTERNAL_KEY`, `ENCRYPTION_KEY` и при наличии `AI_AGENT_URL`. Полный контур с worker запускается из корня репозитория.
+3. Заполнить `TELEGRAM_BOT_TOKEN`, `ADMIN_API_KEY`, отдельный `PUBLISHER_INTERNAL_KEY`, `ENCRYPTION_KEY` и при наличии `AI_AGENT_URL`. Если на агенте задан `AI_AGENT_API_KEY`, Backend, bot и worker должны использовать то же значение для `X-Internal-Key`. Полный контур с worker и AI-agent запускается из корня репозитория.
 4. Запустить PostgreSQL и Backend:
 
    ```bash
@@ -95,7 +95,7 @@ Backend передаёт AI-agent оба идентификатора: `id` (в�
 
 ## Контракт AI-агента
 
-Backend отправляет POST на `AI_AGENT_URL`:
+Backend отправляет POST на `AI_AGENT_URL` (в общем Compose — `http://ai-agent:8000/v1/generate`). Если на AI-agent задан `AI_AGENT_API_KEY`, Backend и Telegram-бот добавляют заголовок `X-Internal-Key` с тем же значением:
 
 ```json
 {
