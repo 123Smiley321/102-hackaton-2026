@@ -85,7 +85,7 @@ Content-Type: application/json
 }
 ```
 
-### Сопоставление company_id между модулям
+### Сопоставление company_id между модулями
 
 `company_id` из пакета Лизы сохраняется в `companies.external_id` без преобразования (например, `salavatsteklo_demo`). В API создания компании принимаются оба имени поля: `company_id` и `external_id`. В ответе API возвращаются:
 - `id` — внутренний числовой PK Backend; используется в FK `tasks/publications` и совместим с воркером Данила;
