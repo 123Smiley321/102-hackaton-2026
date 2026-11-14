@@ -19,7 +19,7 @@
 
 1. Установить Docker Desktop и запустить Docker.
 2. Скопировать `.env.example` в `.env`.
-3. Заполнить `TELEGRAM_BOT_TOKEN`, `ADMIN_API_KEY`, отдельный `PUBLISHER_INTERNAL_KEY`, `ENCRYPTION_KEY` и при наличии `AI_AGENT_URL`. Если на агенте задан `AI_AGENT_API_KEY`, Backend, bot и worker должны использовать то же значение для `X-Internal-Key`. Полный контур с worker и AI-agent запускается из корня репозитория.
+3. Заполнить `TELEGRAM_BOT_TOKEN`, `ADMIN_API_KEY`, отдельные `PUBLISHER_INTERNAL_KEY` и `AI_AGENT_API_KEY`, `ENCRYPTION_KEY` и `AI_AGENT_URL=http://ai-agent:8000/v1/generate`. Полный пятисервисный контур с worker и AI-agent запускается из корня репозитория.
 4. Запустить PostgreSQL и Backend:
 
    ```bash
@@ -66,7 +66,7 @@
 - `GET /api/companies/by-external-id/{company_id}` — найти профиль по внешнему ключу.
 - `PATCH /api/companies/{id}` — изменить только переданные настройки профиля.
 
-В профиле настраиваются описание, продукты, аудитория, преимущества, Tone of Voice, правила бренда, доступные площадки (`vk`, `telegram`, `max`) и режим согласования (`per_platform` — отдельное согласование для каждой площадки; `all_platforms` — одно согласование для выбранного набора площадок). По умолчанию согласование обязательно. Секрет VK при обновлении шифруется и никогда не возвращается в API-ответе. Все изменения профиля фиксируются в `audit_logs`.
+В профиле настраиваются описание, продукты, аудитория, преимущества, Tone of Voice, правила бренда, доступные площадки (`vk`, `telegram`, `max`) и режим согласования (`per_platform` — отдельное согласование для каждой площадки; `all_platforms` — одно согласование для выбранного набора площадок). По умолчанию согласование обязательно. Секреты VK и MAX при создании/обновлении шифруются и никогда не возвращаются в API-ответе. Для MAX дополнительно задаются `max_chat_id` и `max_access_token`; см. `MAX.md`. Все изменения профиля фиксируются в `audit_logs`.
 
 Для уже созданной БД перед запуском применить `migration_task13_company_settings.sql` один раз. Миграция добавляет настройки компании и не меняет таблицы `publications` / `platform_post`, которыми владеет Данил.
 
@@ -95,7 +95,7 @@ Backend передаёт AI-agent оба идентификатора: `id` (в�
 
 ## Контракт AI-агента
 
-Backend отправляет POST на `AI_AGENT_URL` (в общем Compose — `http://ai-agent:8000/v1/generate`). Если на AI-agent задан `AI_AGENT_API_KEY`, Backend и Telegram-бот добавляют заголовок `X-Internal-Key` с тем же значением:
+Backend отправляет POST на `AI_AGENT_URL` (в Compose — `http://ai-agent:8000/v1/generate`). Если задан `AI_AGENT_API_KEY`, Backend и bot добавляют заголовок `X-Internal-Key: <AI_AGENT_API_KEY>`; то же значение должно быть настроено на AI-agent:
 
 ```json
 {
@@ -135,7 +135,7 @@ Backend отправляет POST на `AI_AGENT_URL` (в общем Compose —
 
 - Обработчик `approve` только фиксирует согласование. Фактическую отправку выполняет internal publish API после вызова worker-ом.
 - Для кросспостинга используется отдельная строка `publications` на каждую площадку; `idempotency_key` уникален для каждой строки.
-- MAX пока возвращает явную ошибку; статистика и автоматические публичные ответы на комментарии не реализованы.
+- MAX-адаптер реализован по официальному API и покрыт mock-тестами (`MAX.md`), но живой E2E не проведён: команда не является юрлицом и не имела MAX token; статистика и автоматические публичные ответы на комментарии не реализованы.
 - Административные API используют общий `X-Admin-Key`; для коммерческого запуска нужны пользователи, JWT/RBAC и PostgreSQL RLS.
 - Для существующей БД применяются SQL-миграции из этого каталога; `create_all` не меняет уже созданные таблицы. Для production рекомендуется Alembic.
 
@@ -170,32 +170,35 @@ POST /internal/publications/{publication_id}/publish
 X-Publisher-Key: <PUBLISHER_INTERNAL_KEY>
 ```
 
-Backend повторно проверяет статус, дату, активность компании и разрешённую площадку. Он блокирует строку, переводит её в `publishing`, вызывает API VK/Telegram и сохраняет внешний ID, URL и время публикации. Повторный запрос для `published` не отправляет материал повторно.
+Backend повторно проверяет статус, дату, активность компании и разрешённую площадку. Он блокирует строку, переводит её в `publishing`, вызывает API VK/Telegram/MAX и сохраняет внешний ID, URL и время публикации. Повторный запрос для `published` не отправляет материал повторно.
 
-Если соединение оборвалось в момент отправки и неизвестно, приняла ли площадка материал, статус становится `publish_unknown`. Автоматически повторять такую отправку нельзя: сначала оператор сверяет стену/канал площадки и вручную разрешает дальнейшие действия через `POST /api/publications/{id}/resolve`: `mark_published` с внешним ID либо `retry` только с `confirmed_not_published=true`. VK/Telegram не дают универсального idempotency key для этих операций, поэтому гарантировать exactly-once при сетевом timeout невозможно. Локальная блокировка и журнал исключают обычные параллельные/повторные вызовы.
+Если соединение оборвалось в момент отправки и неизвестно, приняла ли площадка материал, статус становится `publish_unknown`. Автоматически повторять такую отправку нельзя: сначала оператор сверяет стену/канал площадки и вручную разрешает дальнейшие действия через `POST /api/publications/{id}/resolve`: `mark_published` с внешним ID либо `retry` только с `confirmed_not_published=true`. VK/Telegram/MAX не дают универсального idempotency key для этих операций, поэтому гарантировать exactly-once при сетевом timeout невозможно. Локальная блокировка и журнал исключают обычные параллельные/повторные вызовы.
 
-Поддерживаются VK `wall.post` (включая загрузку изображения через Photos API) и Telegram `sendMessage`/`sendPhoto`. Для VK изображениям нужен доступ сообщества к Photos API. MAX оставлен с явной ошибкой до появления подтверждённого API-контракта и токена.
+Для MAX локальная ошибка конфигурации сохраняется как `not_configured` + HTTP 422, а определённый отказ API (4xx/`success:false`) — как `publish_failed` + HTTP 422. Worker не выбирает эти записи повторно. После исправления администратор возвращает их в `approved` через `resolve` с `{"action":"retry"}`; для `publish_unknown` по-прежнему обязательно `confirmed_not_published=true`.
 
-После успеха Backend сам отправляет уведомление в `approval_chat_id` (или `telegram_chat_id`). Ошибка уведомления не меняет уже подтверждённый статус `published`. При `publish_unknown` ответственный также получает алерт о ручной сверке.
+Поддерживаются VK `wall.post` (включая загрузку изображения через Photos API), Telegram `sendMessage`/`sendPhoto` и MAX `POST /messages` (текст и изображение по прямой HTTPS-ссылке). Для VK изображениям нужен доступ сообщества к Photos API. MAX возвращает `not_configured` без company token/chat ID и считает успехом только ответ с реальным `message.message.mid`; настройка, статусы и честный `live_not_verified` описаны в `MAX.md`.
 
-Для мониторинга Данила Backend предоставляет `GET /internal/publications/{id}/comments` (только VK) и `POST /internal/publications/{id}/notify`. Оба endpoint-а требуют `X-Publisher-Key`; worker не получает VK community token или Telegram bot token.
+После успеха Backend сам отправляет уведомление в `approval_chat_id` (или `telegram_chat_id`). Ошибка уведомления не меняет уже подтверждённый статус `published`. При `publish_unknown` ответственный получает алерт о ручной сверке, а при `not_configured`/`publish_failed` — сообщение об остановке автоматического повтора и необходимости ручного `resolve`.
+
+Для мониторинга Данила Backend предоставляет `GET /internal/publications/{id}/comments` (только VK) и `POST /internal/publications/{id}/notify`. Оба endpoint-а требуют `X-Publisher-Key`; worker не получает VK community token, Telegram bot token или MAX bot token.
 
 ### Изоляция и доступы (№18)
 Профили, публикации, история диалогов и knowledge items имеют `company_id`; чтение истории/публикаций/знаний фильтруется по нему. Knowledge items хранятся раздельно по компаниям; подключение их индексации к RAG остаётся задачей AI-слоя.
 
 Администратор создаёт ключ компании через `POST /api/companies/{id}/access-keys`, передавая `name` и минимальный список scopes (`company:read`, `history:read`, `publications:read`). Исходный ключ показывается один раз; в БД сохраняется только SHA-256 hash. Для отзыва: `DELETE /api/companies/{id}/access-keys/{key_id}`. Журнал доступен администратору по `GET /api/companies/{id}/audit-log`. Ключи разных компаний не взаимозаменяемы.
 
-VK community token хранится зашифрованным Fernet. До сохранения любого токена обязательно задайте `ENCRYPTION_KEY`; без него backend откажет в сохранении секрета. Сгенерировать ключ можно командой из `.env.example`. Старые VK-токены, сохранённые до включения Fernet, необходимо заново ввести через PATCH после настройки ключа: backend намеренно не пытается использовать потенциально незашифрованные значения.
+VK community token и MAX bot token хранятся зашифрованными Fernet. До сохранения любого токена обязательно задайте `ENCRYPTION_KEY`; без него backend откажет в сохранении секрета. Сгенерировать ключ можно командой из `.env.example`. Старые VK-токены, сохранённые до включения Fernet, необходимо заново ввести через PATCH после настройки ключа: backend намеренно не пытается использовать потенциально незашифрованные значения.
 
-Для отзыва VK-доступа: `POST /api/companies/{id}/credentials/revoke` с `{"platform":"vk"}`. Для отключения Telegram-назначения конкретной компании — `{"platform":"telegram"}`. Общий Telegram bot token остаётся инфраструктурным секретом и не выдаётся клиентским ключам.
+Для отзыва VK-доступа: `POST /api/companies/{id}/credentials/revoke` с `{"platform":"vk"}`. Для отключения Telegram-назначения конкретной компании — `{"platform":"telegram"}`, для очистки MAX token/chat ID — `{"platform":"max"}`. Общий Telegram bot token остаётся инфраструктурным секретом и не выдаётся клиентским ключам. MAX token задаётся отдельно для каждой компании и тоже не выдаётся worker-у.
 
 ### Миграция
-Перед запуском на существующей БД применить `migration_task17_18_security_publishing.sql` после миграций №13 и №16. `create_all` создаёт новые таблицы, но не заменяет миграцию существующих таблиц.
+Перед запуском на существующей БД применить `migration_task17_18_security_publishing.sql` после миграций №13 и №16. Для MAX затем один раз применить `migration_add_max_publisher.sql`. `create_all` создаёт новые таблицы, но не заменяет миграцию существующих таблиц.
 
 ### Переменные окружения
-- `ENCRYPTION_KEY` — обязательный Fernet key для VK tokens.
+- `ENCRYPTION_KEY` — обязательный Fernet key для VK/MAX tokens.
 - `PUBLISHER_INTERNAL_KEY` — отдельный длинный случайный ключ только для Backend и worker Данила.
+- `AI_AGENT_API_KEY` — отдельный ключ внутреннего канала Backend/bot/worker ↔ AI-agent; не совпадает с admin/publisher ключами.
 - `ADMIN_API_KEY` — административный ключ; не передавать его модулю публикаций.
 - `TELEGRAM_BOT_TOKEN` — только Backend и Telegram-бот; worker его не получает.
 
-Порядок миграций существующей БД: external_id → approved_at → task13 → task16 → task17_18. После обновления сгенерируйте новый publisher key в локальном `.env`, не копируйте значения из пересланных примеров.
+Порядок миграций существующей БД: external_id → approved_at → task13 → task16 → task17_18 → MAX publisher. После обновления сгенерируйте новый publisher key в локальном `.env`, не копируйте значения из пересланных примеров. MAX token в `.env` не добавляется: используйте company API по инструкции `MAX.md`.

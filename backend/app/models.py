@@ -25,6 +25,8 @@ class Company(Base):
     telegram_chat_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     vk_group_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     vk_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    max_chat_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    max_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def company_id(self) -> str:
