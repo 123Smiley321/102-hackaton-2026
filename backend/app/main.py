@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 import hmac
@@ -13,6 +14,8 @@ from app.models import Company, AuditLog, Publication, CompanyAPIKey, CompanyKno
 from app.schemas import CompanyCreate, CompanyOut, CompanyUpdate, GenerateRequest
 from app.security import encrypt_secret, hash_api_key, new_api_key
 from app.publisher import (
+    PublicationNotConfiguredError,
+    PublicationRejectedError,
     fetch_vk_comments,
     publish_to_platform,
     send_telegram_notification,
@@ -78,8 +81,8 @@ async def health():
 
 @app.post("/api/companies", response_model=CompanyOut, dependencies=[Depends(require_admin)])
 async def create_company(data: CompanyCreate, db: AsyncSession = Depends(get_db)):
-    if data.vk_access_token and not settings.encryption_key:
-        raise HTTPException(503, "Перед сохранением VK token настройте ENCRYPTION_KEY")
+    if (data.vk_access_token or data.max_access_token) and not settings.encryption_key:
+        raise HTTPException(503, "Перед сохранением VK/MAX token настройте ENCRYPTION_KEY")
     external_id = data.external_id.strip() if data.external_id else None
     if external_id:
         existing = await db.execute(select(Company).where(Company.external_id == external_id))
@@ -92,7 +95,8 @@ async def create_company(data: CompanyCreate, db: AsyncSession = Depends(get_db)
         brand_guidelines=data.brand_guidelines, enabled_platforms=data.enabled_platforms,
         approval_required=data.approval_required, approval_mode=data.approval_mode,
         telegram_chat_id=data.telegram_chat_id, approval_chat_id=data.approval_chat_id,
-        vk_group_id=data.vk_group_id, vk_access_token=encrypt_secret(data.vk_access_token)
+        vk_group_id=data.vk_group_id, vk_access_token=encrypt_secret(data.vk_access_token),
+        max_chat_id=data.max_chat_id, max_access_token=encrypt_secret(data.max_access_token)
     )
     db.add(company)
     await db.flush()
@@ -120,18 +124,20 @@ async def update_company(company_id: int, data: CompanyUpdate, db: AsyncSession 
         raise HTTPException(404, "Company not found")
 
     changes = data.model_dump(exclude_unset=True)
-    if changes.get("vk_access_token") and not settings.encryption_key:
-        raise HTTPException(503, "Перед сохранением VK token настройте ENCRYPTION_KEY")
-    secret_changed = "vk_access_token" in changes
-    if secret_changed:
-        token = changes.pop("vk_access_token")
-        company.vk_access_token = encrypt_secret(token) if token else None
+    if (changes.get("vk_access_token") or changes.get("max_access_token")) and not settings.encryption_key:
+        raise HTTPException(503, "Перед сохранением VK/MAX token настройте ENCRYPTION_KEY")
+    secret_changes = []
+    for secret_field in ("vk_access_token", "max_access_token"):
+        if secret_field in changes:
+            token = changes.pop(secret_field)
+            setattr(company, secret_field, encrypt_secret(token) if token else None)
+            secret_changes.append(f"{secret_field}_updated")
     for field, value in changes.items():
         setattr(company, field, value)
 
     db.add(AuditLog(company_id=company.id, actor="admin", action="company_updated",
                     object_type="company", object_id=str(company.id),
-                    details=",".join(sorted(changes.keys()) + (["vk_access_token_updated"] if secret_changed else []))))
+                    details=",".join(sorted(changes.keys()) + secret_changes)))
     await db.commit()
     await db.refresh(company)
     return company
@@ -237,8 +243,12 @@ async def revoke_platform_credentials(company_id: int, data: dict, db: AsyncSess
         # destination chat and leaves other companies untouched.
         company.telegram_chat_id = None
         company.enabled_platforms = [p for p in (company.enabled_platforms or []) if p != "telegram"]
+    elif platform == "max":
+        company.max_access_token = None
+        company.max_chat_id = None
+        company.enabled_platforms = [p for p in (company.enabled_platforms or []) if p != "max"]
     else:
-        raise HTTPException(422, "platform должен быть vk или telegram")
+        raise HTTPException(422, "platform должен быть vk, telegram или max")
     db.add(AuditLog(company_id=company.id, actor="admin", action="platform_credentials_revoked",
                     object_type="company", object_id=str(company_id), details=platform))
     await db.commit()
@@ -280,6 +290,36 @@ async def publish_approved_publication(publication_id: int,
     await db.commit()
     try:
         post_id, post_url = await publish_to_platform(company, publication)
+    except (PublicationNotConfiguredError, PublicationRejectedError) as exc:
+        # A configuration error happens before the remote call; HTTP 4xx is a definite
+        # platform rejection. Neither case is an ambiguous network publishing result.
+        terminal_status = (
+            "not_configured"
+            if isinstance(exc, PublicationNotConfiguredError)
+            else "publish_failed"
+        )
+        safe_error = re.sub(r"https?://\S+", "[external URL]", str(exc))[:1000]
+        publication.status = terminal_status
+        publication.publish_error = safe_error
+        db.add(AuditLog(company_id=company.id, actor="publication-worker",
+                        action=terminal_status, object_type="publication",
+                        object_id=str(publication.id), details=safe_error))
+        await db.commit()
+        await notify_operator_safely(
+            company,
+            f"⚠️ Публикация №{publication.id} ({publication.platform}) не отправлена: "
+            f"{terminal_status}. Автоматический повтор остановлен; исправьте настройки "
+            "или материал и верните запись в approved через admin API.",
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": terminal_status,
+                "publication_id": publication.id,
+                "platform": publication.platform,
+                "detail": safe_error,
+            },
+        )
     except Exception as exc:
         # The remote outcome may be ambiguous. Never auto-retry this publication.
         safe_error = re.sub(r"https?://\S+", "[external URL]", str(exc))
@@ -337,7 +377,7 @@ async def internal_publication_comments(publication_id: int,
     except Exception as exc:
         logger.error("VK comments fetch failed for publication %s: %s", publication_id, type(exc).__name__)
         raise HTTPException(502, "Не удалось получить комментарии VK") from exc
-    return {"publication_id": publication_id, "comments": comments}
+    return {"publication_id": publication.id, "comments": comments}
 
 
 @app.post("/internal/publications/{publication_id}/notify")
@@ -366,10 +406,14 @@ async def resolve_uncertain_publication(publication_id: int, data: dict, db: Asy
     publication = await db.get(Publication, publication_id)
     if not publication:
         raise HTTPException(404, "Publication not found")
-    if publication.status != "publish_unknown":
-        raise HTTPException(409, "Разрешать вручную можно только публикации publish_unknown")
+    initial_status = publication.status
+    if initial_status not in {"publish_unknown", "not_configured", "publish_failed"}:
+        raise HTTPException(
+            409,
+            "Ручное разрешение доступно только для publish_unknown, not_configured или publish_failed",
+        )
     action = data.get("action")
-    if action == "mark_published":
+    if action == "mark_published" and initial_status == "publish_unknown":
         remote_id = data.get("published_post_id")
         if not isinstance(remote_id, (str, int)) or not str(remote_id).strip():
             raise HTTPException(422, "Укажите published_post_id из кабинета площадки")
@@ -378,12 +422,21 @@ async def resolve_uncertain_publication(publication_id: int, data: dict, db: Asy
         publication.published_url = data.get("published_url")
         publication.published_at = now()
         audit_action = "publish_unknown_confirmed_published"
-    elif action == "retry" and data.get("confirmed_not_published") is True:
+    elif action == "retry" and (
+        initial_status in {"not_configured", "publish_failed"}
+        or data.get("confirmed_not_published") is True
+    ):
+        # Local configuration errors and HTTP 4xx rejections have no ambiguous remote
+        # outcome. publish_unknown still requires an explicit not-published confirmation.
         publication.status = "approved"
         publication.publish_error = None
-        audit_action = "publish_unknown_confirmed_not_published_retry_allowed"
+        audit_action = f"{initial_status}_retry_allowed"
     else:
-        raise HTTPException(422, "action: mark_published либо retry с confirmed_not_published=true")
+        raise HTTPException(
+            422,
+            "Для publish_unknown: mark_published либо retry с confirmed_not_published=true; "
+            "для not_configured/publish_failed после исправления: retry",
+        )
     db.add(AuditLog(company_id=publication.company_id, actor="admin", action=audit_action,
                     object_type="publication", object_id=str(publication.id),
                     details="Manual reconciliation"))
