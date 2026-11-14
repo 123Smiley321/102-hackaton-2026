@@ -3,7 +3,7 @@
 ## Подготовка
 
 1. Создать `.env` из `.env.example`.
-2. Заполнить `TELEGRAM_BOT_TOKEN` и `AI_AGENT_URL`.
+2. Заполнить `TELEGRAM_BOT_TOKEN` и `AI_AGENT_URL`. Если на AI-agent включена проверка, также задать общий `AI_AGENT_API_KEY`; bot передаёт его как `X-Internal-Key`.
 3. Запустить БД и Backend: `docker compose up --build -d db backend`.
 4. Запустить отдельный процесс Telegram-бота: `docker compose --profile telegram up --build -d bot`.
 5. Создать профиль компании через `POST /api/companies`, указав `telegram_chat_id`.
@@ -13,6 +13,7 @@
 - [ ] `/start` показывает статус подключения; для непривязанного чата сообщает chat_id.
 - [ ] Свободное текстовое поручение создаёт запись `tasks` и сохраняет сообщение пользователя в `message_history`.
 - [ ] В запрос AI-agent передаются `company` и до 12 последних сообщений `history` текущей компании и текущего чата.
+- [ ] При заданном `AI_AGENT_API_KEY` запрос содержит `X-Internal-Key`; неверный ключ получает HTTP 401.
 - [ ] Ответ AI сохраняется в `message_history` с ролью `assistant`.
 - [ ] При успешной генерации создаётся черновик и бот сообщает, что он отправлен на согласование.
 - [ ] `/history` показывает до 10 последних сообщений текущего чата.

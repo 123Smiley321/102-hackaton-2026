@@ -25,7 +25,7 @@ curl -X POST "http://backend:8000/internal/publications/123/publish" \
 - Worker Данила: тот же ключ в переменной окружения. Не передавать `ADMIN_API_KEY` worker-у.
 - Backend `.env`: `ENCRYPTION_KEY` — Fernet key для VK community token.
 - Telegram bot token остаётся на Backend; worker его не получает.
-- Worker получает только `DATABASE_URL`, `BACKEND_URL`, `PUBLISHER_INTERNAL_KEY`, `AI_AGENT_URL` и числовые настройки опроса. `ENCRYPTION_KEY` и VK community token ему также не передаются.
+- Worker получает только `DATABASE_URL`, `BACKEND_URL`, `PUBLISHER_INTERNAL_KEY`, `AI_AGENT_URL`, `AI_AGENT_API_KEY` и числовые настройки опроса. `ENCRYPTION_KEY`, `OPENAI_API_KEY` и VK community token ему не передаются.
 
 ## VK
 Используется community token и `wall.post`; если к публикации прикреплено изображение, Backend использует Photos API (`photos.getWallUploadServer`, `photos.saveWallPhoto`). Для изображений у community token должно быть право на Photos API.

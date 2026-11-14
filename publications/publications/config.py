@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # Optional: drafts of replies to VK comments. Platform credentials are never configured here.
     ai_agent_url: str = ""
+    ai_agent_api_key: str = ""
 
     scheduler_interval_sec: int = 15
     monitor_interval_sec: int = 60

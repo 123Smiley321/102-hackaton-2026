@@ -77,6 +77,13 @@ async def get_history_for_display(
     return rows
 
 
+def ai_agent_headers() -> dict[str, str]:
+    """Authenticate internal AI calls when the agent has an API key configured."""
+    if settings.ai_agent_api_key:
+        return {"X-Internal-Key": settings.ai_agent_api_key}
+    return {}
+
+
 async def generate_content(
     company: Company,
     prompt: str,
@@ -107,7 +114,11 @@ async def generate_content(
 
     timeout = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(settings.ai_agent_url, json=payload)
+        response = await client.post(
+            settings.ai_agent_url,
+            json=payload,
+            headers=ai_agent_headers(),
+        )
         response.raise_for_status()
         data = response.json()
 
