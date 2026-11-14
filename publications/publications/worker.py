@@ -1,18 +1,24 @@
-"""Точка входа модуля публикаций: планировщик + мониторинг в одном процессе.
+"""Publication scheduler plus VK comment monitor.
 
-Запуск: python -m publications.worker  (в Docker — CMD этого контейнера)
+Run with ``python -m publications.worker``. Platform tokens are intentionally not
+accepted here: all VK/Telegram traffic is proxied through Backend internal APIs.
 """
 import asyncio
 import logging
 
+from publications.db import ensure_worker_tables
 from publications.monitor import monitor_loop
-from publications.scheduler import scheduler_loop
+from publications.scheduler import publisher_headers, scheduler_loop
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 async def main() -> None:
+    publisher_headers()
+    await ensure_worker_tables()
     await asyncio.gather(scheduler_loop(), monitor_loop())
 
 

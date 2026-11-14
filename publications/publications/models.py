@@ -1,8 +1,8 @@
-"""Модели модуля публикаций.
+"""Database views owned by the publication worker.
 
-Publication и Company — read-only представления таблиц backend (Р1).
-Модуль не создаёт и не меняет их, только читает и обновляет статус публикации
-после публикации на площадке. Свои таблицы: platform_post, comment_event.
+``Publication`` and ``Company`` are read-only subsets of backend tables. The worker
+never updates them and does not map social tokens. Its own tables are
+``platform_posts`` (a monitoring/audit mirror) and ``comment_events``.
 """
 from datetime import datetime, timezone
 
@@ -28,8 +28,12 @@ class Publication(Base):
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(30), index=True)
     approved_by: Mapped[str | None]
+    approved_at: Mapped[datetime | None]
     published_post_id: Mapped[str | None]
     published_url: Mapped[str | None]
+    published_at: Mapped[datetime | None]
+    publish_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    publish_error: Mapped[str | None]
     idempotency_key: Mapped[str]
     created_at: Mapped[datetime]
 
@@ -38,11 +42,13 @@ class Company(Base):
     __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str]
     name: Mapped[str]
-    telegram_chat_id: Mapped[str | None]
-    vk_group_id: Mapped[str | None]
-    vk_access_token: Mapped[str | None]  # зашифрован Fernet (тот же ENCRYPTION_KEY)
-    approval_chat_id: Mapped[str | None]
+    description: Mapped[str]
+    tone_of_voice: Mapped[str]
+    products: Mapped[str]
+    target_audience: Mapped[str]
+    advantages: Mapped[str]
 
 
 class PlatformPost(Base):
@@ -51,6 +57,7 @@ class PlatformPost(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     publication_id: Mapped[int] = mapped_column(ForeignKey("publications.id"), index=True)
     platform: Mapped[str] = mapped_column(String(20))
+    # Legacy column name: it stores the exact canonical text sent by the backend.
     adapted_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="scheduled", index=True)
     external_post_id: Mapped[str | None]

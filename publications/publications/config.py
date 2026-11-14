@@ -5,18 +5,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/marketer"
-    telegram_bot_token: str = ""
-    vk_api_version: str = "5.199"
-    encryption_key: str = ""  # тот же ключ, что у backend (расшифровка токенов компаний)
+    backend_url: str = "http://backend:8000"
+    publisher_internal_key: str = ""
 
-    # Куда кросспостить, если у компании нет своего TG-канала (демо-режим)
-    telegram_target_chat: str = ""
-
-    ai_agent_url: str = ""  # http://ai-agent:8001/generate — для черновиков ответов
+    # Optional: drafts of replies to VK comments. Platform credentials are never configured here.
+    ai_agent_url: str = ""
 
     scheduler_interval_sec: int = 15
     monitor_interval_sec: int = 60
-    max_attempts: int = 3
+    publication_batch_size: int = 50
+    backend_timeout_sec: int = 100
 
 
 settings = Settings()

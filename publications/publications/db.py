@@ -9,3 +9,16 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 
 class Base(DeclarativeBase):
     pass
+
+
+async def ensure_worker_tables() -> None:
+    """Create only worker-owned tables; Backend owns companies/publications."""
+    from publications.models import CommentEvent, PlatformPost
+
+    async with engine.begin() as connection:
+        await connection.run_sync(
+            lambda sync_connection: Base.metadata.create_all(
+                sync_connection,
+                tables=[PlatformPost.__table__, CommentEvent.__table__],
+            )
+        )
