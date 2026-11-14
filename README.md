@@ -1,7 +1,7 @@
 # Кибер 102 — Автономный AI-маркетолог
 
 Прототип для хакатона: представитель компании отправляет поручение в Telegram, AI-агент
-готовит материал, ответственный согласует его, Backend публикует в VK/Telegram и хранит
+готовит материал, ответственный согласует его, Backend публикует в VK/Telegram/MAX и хранит
 аудит. Worker Данила отвечает за очередь, расписание и мониторинг комментариев VK.
 
 ## Состав репозитория
@@ -36,17 +36,26 @@ company API; Backend шифрует его Fernet и не возвращает �
 2. `migration_add_approved_at.sql`;
 3. `migration_task13_company_settings.sql`;
 4. `migration_task16_approval_workflow.sql`;
-5. `migration_task17_18_security_publishing.sql`.
+5. `migration_task17_18_security_publishing.sql`;
+6. `migration_add_max_publisher.sql` — только для MAX-адаптера.
 
-Пример для последней миграции:
+Пример миграции задач №17–18:
 
 ```bash
 docker compose exec -T db psql -U postgres -d marketer \
   < backend/migration_task17_18_security_publishing.sql
 ```
 
+Для существующей БД после неё примените MAX-миграцию:
+
+```bash
+docker compose exec -T db psql -U postgres -d marketer \
+  < backend/migration_add_max_publisher.sql
+```
+
 После обновления контейнеров старый VK token из `.env` больше не используется: при необходимости
-повторно сохраните его через `PATCH /api/companies/{id}`.
+повторно сохраните его через `PATCH /api/companies/{id}`. MAX token также задаётся только через
+company API (`max_access_token`), а не через `.env`; подробнее — `backend/MAX.md`.
 
 ## Контракт Backend ↔ worker
 
@@ -59,10 +68,12 @@ X-Publisher-Key: <PUBLISHER_INTERNAL_KEY>
 ```
 
 Backend повторно проверяет статус, время, активность компании и разрешённую площадку. Только
-Backend вызывает VK/Telegram и меняет канонический статус `publications`.
+Backend вызывает VK/Telegram/MAX и меняет канонический статус `publications`.
 
 - `200 published` / `already_published` — завершено; worker обновляет mirror `platform_posts`.
 - `409` — проверка статуса/времени не обходится.
+- `422 not_configured` / `publish_failed` — локальная конфигурация не задана либо площадка
+  определённо отклонила запрос; worker прекращает попытки до ручного `resolve`.
 - `502` — результат неоднозначен, Backend ставит `publish_unknown`; автоматический повтор запрещён.
 - Уведомления об успешной публикации и ручной сверке отправляет Backend.
 - После ручного `mark_published` worker синхронизирует mirror и подхватывает пост мониторингом.
@@ -78,7 +89,9 @@ Content-Type: application/json
 ```
 
 Либо `{"action":"retry","confirmed_not_published":true}` только после проверки, что поста
-на площадке нет. Это не exactly-once магия: VK/Telegram не дают универсального idempotency key.
+на площадке нет. Это не exactly-once магия: VK/Telegram/MAX не дают универсального idempotency key
+для отправки постов. Для `not_configured`/`publish_failed` после исправления используется
+`{"action":"retry"}` без подтверждения неопубликованности: внешний исход там не неоднозначен.
 
 ### Мониторинг комментариев
 
@@ -106,6 +119,16 @@ docker compose exec db psql -U postgres -d marketer -c \
 затем отправляет уведомление в `approval_chat_id` (или `telegram_chat_id`). Перезапуск worker-а не
 должен создавать дубль.
 
+## MAX: официальный API без имитации публикации
+
+Реализованы текст и изображение по прямой HTTPS-ссылке через `POST platform-api2.max.ru/messages`,
+company-scoped encrypted token, обработка ответов и ручное разрешение ошибок. Подтверждением успеха
+служит только реальный `message.message.mid`; подробный контракт и команды — `backend/MAX.md`.
+
+**Живой MAX E2E не выполнялся (`live_not_verified`).** Команда не является юрлицом и на момент
+хакатона не имела токена MAX. Код реализован по официальному API и проверен статически и
+mock/unit-тестами; это не заявляется как реальная публикация в MAX.
+
 ## AI-контракт
 
 Backend отправляет `{prompt, company, history, knowledge_base}`. `knowledge_base` — до 20 последних
@@ -116,6 +139,8 @@ Backend отправляет `{prompt, company, history, knowledge_base}`. `know
 
 - Чек-листы Backend: `backend/tests_task12.md`, `tests_task13.md`, `tests_task16.md`, `tests_task17_18.md`.
 - Автотесты worker-контракта: `python -m unittest discover -s publications/tests -v`.
+- MAX/backend mock-тесты: `PYTHONPATH=backend python -m unittest discover -s backend/tests -v`
+  (зависимости: `backend/requirements-dev.txt`).
 - После рестарта: повторный internal request возвращает `already_published`, дублей нет.
 - Для 502 проверить `publish_unknown` и оба сценария ручного разрешения.
 
@@ -123,8 +148,9 @@ Backend отправляет `{prompt, company, history, knowledge_base}`. `know
 
 - `.env` не коммитится. Используйте тестовые токены и синтетические данные.
 - Worker получает только `DATABASE_URL`, `BACKEND_URL`, `PUBLISHER_INTERNAL_KEY`, AI URL и настройки опроса.
-  `ADMIN_API_KEY`, `TELEGRAM_BOT_TOKEN`, `ENCRYPTION_KEY` и VK token ему не передаются.
+  `ADMIN_API_KEY`, `TELEGRAM_BOT_TOKEN`, `ENCRYPTION_KEY`, VK и MAX tokens ему не передаются.
 - Bot получает Telegram token и AI URL, но не admin/publisher/Fernet keys.
 - Company API keys хранятся как SHA-256 hash, ограничены компанией/scopes и отзываются.
-- MAX возвращает явную ошибку до подключения подтверждённого API; фейковой публикации нет.
+- MAX token передаётся только в `Authorization` официального API и хранится зашифрованным в БД;
+  без конфигурации возвращается `not_configured`, фейковой публикации нет.
 - Для production нужны Alembic, JWT/RBAC и PostgreSQL RLS; текущий вариант — прототип хакатона.

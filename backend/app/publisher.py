@@ -1,8 +1,8 @@
-"""Backend-owned VK/Telegram API calls and operator notifications.
+"""Backend-owned VK/Telegram/MAX API calls and operator notifications.
 
-The publication worker never receives platform tokens. VK/Telegram do not provide a
-universal idempotency key, so ambiguous publishing outcomes are handled by the API
-endpoint as ``publish_unknown`` and require manual reconciliation.
+The publication worker never receives platform tokens. These platforms do not provide
+an idempotency key for sending posts, so ambiguous publishing outcomes are handled by
+the API endpoint as ``publish_unknown`` and require manual reconciliation.
 """
 from __future__ import annotations
 
@@ -18,6 +18,15 @@ from app.models import Company, Publication
 from app.security import decrypt_secret
 
 VK_API = "https://api.vk.com/method"
+MAX_API = "https://platform-api2.max.ru"
+
+
+class PublicationNotConfiguredError(RuntimeError):
+    """A deterministic local configuration error; no external post was attempted."""
+
+
+class PublicationRejectedError(RuntimeError):
+    """The platform definitively rejected the request with an HTTP 4xx response."""
 
 
 async def _validate_image_url(url: str) -> None:
@@ -172,6 +181,111 @@ async def publish_telegram(
     return message_id, post_url
 
 
+def _max_rejection(response: httpx.Response, token: str) -> PublicationRejectedError:
+    """Build a bounded error without leaking the access token or response headers."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    code = str(payload.get("code") or "unknown")[:120]
+    message = str(payload.get("message") or "request rejected")[:300]
+    message = message.replace(token, "[redacted]")
+    return PublicationRejectedError(
+        f"MAX API HTTP {response.status_code} ({code}): {message}"
+    )
+
+
+async def _publish_max_with_client(
+    client: httpx.AsyncClient,
+    token: str,
+    chat_id: int,
+    publication: Publication,
+) -> tuple[str, str | None]:
+    body: dict = {"text": publication.text}
+    if publication.image_url:
+        # MAX accepts a direct image URL; no local file upload or fake media ID is needed.
+        await _validate_image_url(publication.image_url)
+        body["attachments"] = [
+            {"type": "image", "payload": {"url": publication.image_url}}
+        ]
+    response = await client.post(
+        f"{MAX_API}/messages",
+        params={"chat_id": chat_id},
+        headers={"Authorization": token},
+        json=body,
+    )
+    if 400 <= response.status_code < 500:
+        raise _max_rejection(response, token)
+    if response.status_code >= 500:
+        response.raise_for_status()
+    if response.status_code != 200:
+        raise RuntimeError(f"MAX API returned unexpected HTTP {response.status_code}")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError("MAX API returned HTTP 200 with invalid JSON") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("MAX API returned an unexpected response schema")
+    if data.get("success") is False:
+        code = str(data.get("code") or "unknown")[:120]
+        message = str(data.get("message") or "request rejected")[:300]
+        message = message.replace(token, "[redacted]")
+        raise PublicationRejectedError(f"MAX API rejected request ({code}): {message}")
+
+    # Official schema: {"message": {"message": {"mid": "..."}, "url": "..."}}.
+    message = data.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("MAX API HTTP 200 did not contain a message object")
+    message_payload = message.get("message")
+    if not isinstance(message_payload, dict) or not message_payload.get("mid"):
+        raise RuntimeError("MAX API HTTP 200 did not contain message.message.mid")
+    post_url = message.get("url")
+    return (
+        str(message_payload["mid"]),
+        str(post_url) if isinstance(post_url, str) and post_url else None,
+    )
+
+
+async def publish_max(
+    company: Company,
+    publication: Publication,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[str, str | None]:
+    """Publish through the official MAX Bot API, never through a simulated success path."""
+    if not company.max_access_token or not company.max_chat_id:
+        raise PublicationNotConfiguredError(
+            "MAX not_configured: задайте max_access_token и max_chat_id для компании"
+        )
+    try:
+        chat_id = int(str(company.max_chat_id).strip())
+    except (TypeError, ValueError) as exc:
+        raise PublicationNotConfiguredError(
+            "MAX not_configured: max_chat_id должен быть целым идентификатором чата или канала"
+        ) from exc
+    if not -(2**63) <= chat_id < 2**63:
+        raise PublicationNotConfiguredError(
+            "MAX not_configured: max_chat_id выходит за пределы int64"
+        )
+    try:
+        token = (decrypt_secret(company.max_access_token) or "").strip()
+    except (RuntimeError, ValueError) as exc:
+        raise PublicationNotConfiguredError(
+            "MAX not_configured: не удалось расшифровать max_access_token; проверьте ENCRYPTION_KEY"
+        ) from exc
+    if not token:
+        raise PublicationNotConfiguredError(
+            "MAX not_configured: max_access_token пуст"
+        )
+
+    if client is not None:
+        return await _publish_max_with_client(client, token, chat_id, publication)
+    timeout = httpx.Timeout(40.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as owned_client:
+        return await _publish_max_with_client(owned_client, token, chat_id, publication)
+
+
 async def publish_to_platform(
     company: Company, publication: Publication
 ) -> tuple[str, str | None]:
@@ -180,9 +294,7 @@ async def publish_to_platform(
     if publication.platform == "telegram":
         return await publish_telegram(company, publication)
     if publication.platform == "max":
-        raise RuntimeError(
-            "Публикация в MAX пока не реализована: нужен подтверждённый API и токен"
-        )
+        return await publish_max(company, publication)
     raise RuntimeError(f"Неизвестная площадка: {publication.platform}")
 
 

@@ -54,6 +54,7 @@ class InternalContractTests(unittest.IsolatedAsyncioTestCase):
             result = await request_publish(client, 42)
 
         self.assertEqual(result.status, "already_published")
+        self.assertEqual(result.http_status, 200)
         self.assertEqual(calls, 1)
 
     async def test_conflict_is_not_bypassed(self):
@@ -100,6 +101,37 @@ class InternalContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "dispatch_unknown")
         self.assertIsNone(result.http_status)
         self.assertEqual(calls, 1)
+
+    async def test_not_configured_is_terminal_and_not_retried_inline(self):
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                422,
+                json={"status": "not_configured", "detail": "MAX token is missing"},
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await request_publish(client, 42)
+
+        self.assertEqual(result.status, "not_configured")
+        self.assertEqual(result.http_status, 422)
+        self.assertEqual(calls, 1)
+
+    async def test_publish_failed_is_distinct_from_publish_unknown(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                422,
+                json={"status": "publish_failed", "detail": "MAX API HTTP 401"},
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await request_publish(client, 42)
+
+        self.assertEqual(result.status, "publish_failed")
+        self.assertNotEqual(result.status, "publish_unknown")
 
     async def test_comments_are_read_through_backend(self):
         def handler(request: httpx.Request) -> httpx.Response:

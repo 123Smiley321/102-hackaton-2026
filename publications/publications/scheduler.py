@@ -1,7 +1,7 @@
 """Due-publication scheduler backed exclusively by the internal Backend API.
 
 The worker selects approved rows, releases its short queue locks, and asks the
-backend to publish each ID. Only the backend calls VK/Telegram and changes the
+backend to publish each ID. Only the backend calls VK/Telegram/MAX and changes the
 canonical ``publications`` status. ``platform_posts`` is a worker-owned mirror used
 by the VK comment monitor.
 """
@@ -62,6 +62,12 @@ async def request_publish(client: httpx.AsyncClient, publication_id: int) -> Dis
         return DispatchResult(payload["status"], response.status_code, payload)
     if response.status_code == 502:
         return DispatchResult("publish_unknown", response.status_code, payload, detail)
+    if response.status_code == 422 and payload.get("status") in {
+        "not_configured", "publish_failed"
+    }:
+        # Backend has persisted a terminal non-approved state, so the next poll will
+        # not select this row again. An operator must fix and explicitly requeue it.
+        return DispatchResult(payload["status"], response.status_code, payload, detail)
     if response.status_code == 409:
         return DispatchResult("conflict", response.status_code, payload, detail)
     if response.status_code in {401, 403}:
@@ -84,6 +90,10 @@ async def sync_mirror(publication_id: int, result: DispatchResult) -> None:
             mirror_status = "published"
         elif publication.status == "publish_unknown" or result.status == "publish_unknown":
             mirror_status = "publish_unknown"
+        elif publication.status in {"not_configured", "publish_failed"}:
+            mirror_status = publication.status
+        elif result.status in {"not_configured", "publish_failed"}:
+            mirror_status = result.status
         elif result.status == "blocked":
             mirror_status = "blocked"
         elif result.status == "dispatch_unknown":
@@ -166,7 +176,7 @@ async def process_due() -> int:
             .with_for_update(skip_locked=True)
         )
         publication_ids = list(rows.scalars().all())
-        # Never hold these locks while Backend waits for a VK/Telegram response.
+        # Never hold these locks while Backend waits for a platform response.
         await db.commit()
 
     if not publication_ids:
@@ -187,6 +197,11 @@ async def process_due() -> int:
                 logger.warning(
                     "Publication %s rejected by Backend state check: %s",
                     publication_id, result.detail,
+                )
+            elif result.status in {"not_configured", "publish_failed"}:
+                logger.warning(
+                    "Publication %s stopped as %s: %s",
+                    publication_id, result.status, result.detail,
                 )
             else:
                 logger.error(
