@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     admin_api_key: str = "change-me"
     ai_agent_url: str = ""  # e.g. http://ai-agent:8001/generate
     vk_api_version: str = "5.199"
-    encryption_key: str = ""  # optional Fernet key for encrypting social tokens
+    encryption_key: str = ""  # required before saving/decrypting company social tokens
     public_base_url: str = "http://localhost:8000"
+    publisher_internal_key: str = ""  # shared only with the publication worker
 
 settings = Settings()

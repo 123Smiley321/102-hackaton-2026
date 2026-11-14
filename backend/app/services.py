@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Company, MessageHistory
+from app.db import SessionLocal
+from app.models import Company, MessageHistory, CompanyKnowledgeItem
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +84,23 @@ async def generate_content(
 ) -> dict[str, str | None]:
     """Call the AI-agent using a stable backend-to-agent JSON contract.
 
-    Request: {prompt, company, history}
+    Request: {prompt, knowledge_base, company, history}
     Response: {text, image_url?}
     """
     if not settings.ai_agent_url:
         raise RuntimeError("AI-агент пока не подключён: AI_AGENT_URL не задан")
 
+    async with SessionLocal() as db:
+        knowledge_result = await db.execute(
+            select(CompanyKnowledgeItem).where(CompanyKnowledgeItem.company_id == company.id)
+            .order_by(CompanyKnowledgeItem.created_at.desc()).limit(20)
+        )
+        knowledge_base = [{"title": item.title, "content": item.content[:4000], "source": item.source}
+                          for item in knowledge_result.scalars().all()]
+
     payload = {
         "prompt": prompt,
+        "knowledge_base": knowledge_base,
         "company": company_context(company),
         "history": history[-AI_HISTORY_LIMIT:],
     }
