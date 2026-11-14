@@ -18,6 +18,8 @@ class CompanyCreate(BaseModel):
     approval_chat_id: Optional[str] = None
     vk_group_id: Optional[str] = None
     vk_access_token: Optional[str] = None
+    max_chat_id: Optional[str] = None
+    max_access_token: Optional[str] = None
 
 class CompanyOut(BaseModel):
     id: int  # internal DB id; use for backend foreign keys
@@ -36,6 +38,7 @@ class CompanyOut(BaseModel):
     approval_chat_id: Optional[str]
     telegram_chat_id: Optional[str]
     vk_group_id: Optional[str]
+    max_chat_id: Optional[str]
     is_active: bool
     class Config:
         from_attributes = True
@@ -63,4 +66,6 @@ class CompanyUpdate(BaseModel):
     approval_chat_id: Optional[str] = None
     vk_group_id: Optional[str] = None
     vk_access_token: Optional[str] = None
+    max_chat_id: Optional[str] = None
+    max_access_token: Optional[str] = None
     is_active: Optional[bool] = None
